@@ -20,6 +20,7 @@ public partial class MainForm : Form
     private static extern bool DestroyIcon(IntPtr handle);
 
     private readonly AppSettings _settings;
+    private readonly string _aumid;
     private readonly WebView2 _webView;
     private readonly NotifyIcon _notifyIcon;
     private readonly ContextMenuStrip _trayContextMenu;
@@ -32,9 +33,10 @@ public partial class MainForm : Form
     private DateTime _lastNotificationTime = DateTime.MinValue;
     private Icon? _currentCustomIcon;
 
-    public MainForm(AppSettings settings)
+    public MainForm(AppSettings settings, string aumid)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        _aumid = string.IsNullOrWhiteSpace(aumid) ? "WebTrayHost.App" : aumid;
 
         _expandedDataFolder = Environment.ExpandEnvironmentVariables(_settings.Web.UserDataFolder);
         _cachedFaviconIcoPath = Path.Combine(_expandedDataFolder, "cached_favicon.ico");
@@ -95,7 +97,6 @@ public partial class MainForm : Form
                 var cachedIcon = new Icon(fs);
                 ApplyDynamicIcon(cachedIcon);
 
-                // Garante que o arquivo PNG de alta resolução exista para o Toast
                 if (!File.Exists(_cachedFaviconPngPath))
                 {
                     using var bmp = cachedIcon.ToBitmap();
@@ -150,7 +151,20 @@ public partial class MainForm : Form
         {
             Directory.CreateDirectory(_expandedDataFolder);
 
-            var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: _expandedDataFolder);
+            // Flags para impedir suspensão do loop de eventos JavaScript quando em segundo plano
+            var options = new CoreWebView2EnvironmentOptions
+            {
+                AdditionalBrowserArguments = "--disable-background-timer-throttling " +
+                                             "--disable-backgrounding-occluded-windows " +
+                                             "--disable-renderer-backgrounding " +
+                                             "--disable-features=CalculateNativeWinOcclusion"
+            };
+
+            var environment = await CoreWebView2Environment.CreateAsync(
+                browserExecutableFolder: null,
+                userDataFolder: _expandedDataFolder,
+                options: options);
+
             await _webView.EnsureCoreWebView2Async(environment);
 
             _webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
@@ -160,10 +174,16 @@ public partial class MainForm : Form
                 _webView.CoreWebView2.Settings.UserAgent = _settings.Web.UserAgent;
             }
 
-            // Registro do evento dinâmico de Favicon
+            // Registro de favicon dinâmico
             _webView.CoreWebView2.FaviconChanged += OnFaviconChangedAsync;
 
-            // Injeção da ponte de notificações
+            // Permissões automáticas para notificações e chamadas (áudio/vídeo)
+            _webView.CoreWebView2.PermissionRequested += OnPermissionRequested;
+
+            // Manipulador oficial de eventos de notificação do WebView2
+            _webView.CoreWebView2.NotificationReceived += OnNotificationReceived;
+
+            // Injeção da ponte de notificações e monitor de título
             await InjectNotificationBridgeScriptAsync();
             _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
 
@@ -179,6 +199,29 @@ public partial class MainForm : Form
         }
     }
 
+    private void OnPermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
+    {
+        if (e.PermissionKind is CoreWebView2PermissionKind.Notifications
+                             or CoreWebView2PermissionKind.Microphone
+                             or CoreWebView2PermissionKind.Camera)
+        {
+            e.State = CoreWebView2PermissionState.Allow;
+        }
+    }
+
+    private void OnNotificationReceived(object? sender, CoreWebView2NotificationReceivedEventArgs e)
+    {
+        // Marca como tratada para sinalizar ao Chromium que o host consumiu a mensagem
+        e.Handled = true;
+
+        if (!_settings.Notifications.EnableCustomToastNotifications) return;
+
+        string title = string.IsNullOrWhiteSpace(e.Notification.Title) ? _settings.Window.Title : e.Notification.Title;
+        string body = e.Notification.Body ?? string.Empty;
+
+        HandleIncomingNotification(title, body);
+    }
+
     private async void OnFaviconChangedAsync(object? sender, object e)
     {
         try
@@ -188,7 +231,6 @@ public partial class MainForm : Form
 
             using var rawBitmap = new Bitmap(stream);
 
-            // 1. Salva PNG redimensionado com alta qualidade (96x96) para o Action Center do Windows
             try
             {
                 Directory.CreateDirectory(_expandedDataFolder);
@@ -200,7 +242,6 @@ public partial class MainForm : Form
                 System.Diagnostics.Debug.WriteLine($"[WebTrayHost] Erro ao salvar PNG: {ex.Message}");
             }
 
-            // 2. Extrai e atribui o ícone Win32 nativo
             IntPtr hIcon = rawBitmap.GetHicon();
             try
             {
@@ -215,7 +256,6 @@ public partial class MainForm : Form
                 DestroyIcon(hIcon);
             }
 
-            // 3. Atualiza o atalho do Start Menu com o novo ícone
             EnsureStartMenuShortcut();
         }
         catch (Exception ex)
@@ -275,43 +315,29 @@ public partial class MainForm : Form
     {
         try
         {
-            string programsPath = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
-            string shortcutPath = Path.Combine(programsPath, $"{_settings.Window.Title}.lnk");
+            string exePath = Environment.ProcessPath ?? Application.ExecutablePath;
+            string? iconPath = File.Exists(_cachedFaviconIcoPath) ? _cachedFaviconIcoPath : null;
 
-            Type? shellType = Type.GetTypeFromProgID("WScript.Shell");
-            if (shellType != null)
-            {
-                dynamic? shell = Activator.CreateInstance(shellType);
-                if (shell != null)
-                {
-                    dynamic shortcut = shell.CreateShortcut(shortcutPath);
-                    shortcut.TargetPath = Environment.ProcessPath ?? Application.ExecutablePath;
-                    shortcut.WorkingDirectory = AppContext.BaseDirectory;
-                    if (File.Exists(_cachedFaviconIcoPath))
-                    {
-                        shortcut.IconLocation = $"{_cachedFaviconIcoPath},0";
-                    }
-                    shortcut.Save();
-                }
-            }
+            ShortcutHelper.CreateOrUpdateShortcut(
+                shortcutTitle: _settings.Window.Title,
+                targetExePath: exePath,
+                workingDir: AppContext.BaseDirectory,
+                iconPath: iconPath,
+                aumid: _aumid
+            );
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[WebTrayHost] Não foi possível registrar atalho no menu Iniciar: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[WebTrayHost] Falha ao registrar atalho no menu Iniciar: {ex.Message}");
         }
     }
 
     private async Task InjectNotificationBridgeScriptAsync()
     {
-        string suppressDefaultLiteral = _settings.Notifications.SuppressBrowserDefaultNotifications ? "true" : "false";
-
-        string script = $$"""
+        const string script = """
         (function() {
             if (window.__webTrayInjected) return;
             window.__webTrayInjected = true;
-
-            const suppressDefault = {{suppressDefaultLiteral}};
-            const OriginalNotification = window.Notification;
 
             // 1. Interceptação da Web Notifications API
             window.Notification = function(title, options) {
@@ -323,15 +349,9 @@ public partial class MainForm : Form
                         body: body
                     });
                 } catch(e) {
-                    console.error('[WebTrayHost] Erro ao despachar postMessage:', e);
+                    console.error('[WebTrayHost] Erro no postMessage:', e);
                 }
 
-                // Se NÃO for para suprimir a notificação do browser, despacha para a engine padrão
-                if (!suppressDefault && OriginalNotification) {
-                    return new OriginalNotification(title, options);
-                }
-
-                // Retorna objeto mock conforme a especificação W3C para evitar exceções em SPAs
                 return {
                     close: function() {},
                     addEventListener: function() {},
@@ -345,7 +365,22 @@ public partial class MainForm : Form
                 return Promise.resolve('granted');
             };
 
-            // 2. Monitoramento de mutações no título do documento
+            // 2. Interceptação de ServiceWorkerRegistration.showNotification
+            if (typeof ServiceWorkerRegistration !== 'undefined') {
+                ServiceWorkerRegistration.prototype.showNotification = function(title, options) {
+                    try {
+                        const body = (options && options.body) ? options.body : '';
+                        window.chrome.webview.postMessage({
+                            type: 'notification',
+                            title: title || 'Nova Notificação',
+                            body: body
+                        });
+                    } catch(e) {}
+                    return Promise.resolve();
+                };
+            }
+
+            // 3. Monitoramento de mutações no título do documento (ex: contador de mensagens)
             let lastTitle = document.title;
             const titleObserver = new MutationObserver(function() {
                 if (document.title !== lastTitle) {
@@ -403,7 +438,6 @@ public partial class MainForm : Form
     {
         if (!_settings.Notifications.EnableCustomToastNotifications) return;
 
-        // Anti-duplicação básica (debouncing de 1.5s para notificações com o mesmo conteúdo)
         string fingerprint = $"{title}|{body}";
         if (fingerprint == _lastNotificationFingerprint && (DateTime.UtcNow - _lastNotificationTime).TotalMilliseconds < 1500)
         {
@@ -439,21 +473,19 @@ public partial class MainForm : Form
                 .AddText(title)
                 .AddText(body);
 
-            // Injeta o logotipo de alta resolução no corpo do Toast (Action Center)
-            if (File.Exists(_cachedFaviconPngPath))
-            {
-                builder.AddAppLogoOverride(new Uri(_cachedFaviconPngPath), ToastGenericAppLogoCrop.Circle);
-            }
-
             if (!_settings.Notifications.PlaySound)
             {
                 builder.AddAudio(new ToastAudio { Silent = true });
             }
 
-            builder.Show();
+            var doc = builder.GetXml();
+            var toast = new Windows.UI.Notifications.ToastNotification(doc);
+
+            Windows.UI.Notifications.ToastNotificationManager.CreateToastNotifier(_aumid).Show(toast);
         }
-        catch
+        catch (Exception ex)
         {
+            System.Diagnostics.Debug.WriteLine($"[WebTrayHost] Falha ao disparar Toast nativo: {ex.Message}");
             _notifyIcon.ShowBalloonTip(4000, title, body, ToolTipIcon.Info);
         }
     }

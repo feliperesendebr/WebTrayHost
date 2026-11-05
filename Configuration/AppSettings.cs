@@ -28,14 +28,9 @@ public class WebSettings
 public class NotificationSettings
 {
     /// <summary>
-    /// Ativa ou desativa as notificações nativas disparadas pelo executável C# (Action Center do Windows).
+    /// Ativa ou desativa as notificações nativas disparadas pelo executável (Windows Action Center).
     /// </summary>
     public bool EnableCustomToastNotifications { get; set; } = true;
-
-    /// <summary>
-    /// Suprime a notificação padrão do navegador (Edge/Chromium) para evitar avisos duplicados na tela.
-    /// </summary>
-    public bool SuppressBrowserDefaultNotifications { get; set; } = true;
 
     /// <summary>
     /// Monitora contadores de mensagens não lidas no título da página (ex: "(1) Conversas").

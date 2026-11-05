@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using WebTrayHost.Configuration;
 
@@ -8,8 +9,6 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        ApplicationConfiguration.Initialize();
-
         var builder = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory);
 
@@ -17,12 +16,10 @@ internal static class Program
 
         if (File.Exists(appSettingsPath))
         {
-            // O arquivo local appsettings.json possui prioridade absoluta sobre o modelo
             builder.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
         }
         else
         {
-            // Fallback apenas se o appsettings.json não existir
             builder.AddJsonFile("appsettings.sample.json", optional: true, reloadOnChange: false);
         }
 
@@ -34,6 +31,17 @@ internal static class Program
         var settings = new AppSettings();
         configuration.Bind(settings);
 
-        Application.Run(new MainForm(settings));
+        // Registra o AUMID do processo para o Windows vincular ao atalho do menu Iniciar
+        string aumid = GetAumid(settings.Window.Title);
+        ShortcutHelper.SetCurrentProcessExplicitAppUserModelID(aumid);
+
+        ApplicationConfiguration.Initialize();
+        Application.Run(new MainForm(settings, aumid));
+    }
+
+    public static string GetAumid(string title)
+    {
+        string clean = Regex.Replace(title ?? "App", @"[^a-zA-Z0-9]", "");
+        return $"WebTrayHost.{clean}";
     }
 }
