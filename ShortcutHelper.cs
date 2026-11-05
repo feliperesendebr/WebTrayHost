@@ -9,6 +9,12 @@ internal static class ShortcutHelper
     [DllImport("shell32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern int SetCurrentProcessExplicitAppUserModelID(string AppID);
 
+    [DllImport("shell32.dll")]
+    private static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
+
+    private const int ShcneAssocChanged = 0x08000000;
+    private const uint ShcnfIdList = 0x0000;
+
     private static readonly Guid FmtidAppUserModel = new("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3");
     private const uint PidAppUserModelId = 5;
 
@@ -45,11 +51,35 @@ internal static class ShortcutHelper
 
             var persistFile = (IPersistFile)shellLink;
             persistFile.Save(shortcutPath, true);
+
+            // Invalida o cache do Windows Notifications Platform para forçar releitura do ícone e do atalho
+            InvalidateNotificationCache(aumid);
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[WebTrayHost] Erro ao registrar atalho AUMID: {ex.Message}");
         }
+    }
+
+    public static void InvalidateNotificationCache(string aumid)
+    {
+        try
+        {
+            using var baseKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings",
+                writable: true);
+            baseKey?.DeleteSubKeyTree(aumid, throwOnMissingSubKey: false);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[WebTrayHost] Falha ao limpar cache de registro do AUMID: {ex.Message}");
+        }
+
+        try
+        {
+            SHChangeNotify(ShcneAssocChanged, ShcnfIdList, IntPtr.Zero, IntPtr.Zero);
+        }
+        catch { }
     }
 }
 

@@ -12,6 +12,7 @@ O projeto foi projetado para resolver o problema de serviços web e mensageiros 
 2. **Ciclo de Vida em Segundo Plano (System Tray)**: Permite fechar ou minimizar a janela visual diretamente para a bandeja do sistema sem encerrar os sockets de rede (**WebSockets / SSE / SignalR**).
 3. **Bridge Nativa de Notificações com Vínculo AUMID**: Intercepta eventos de notificação web e despacha Toasts oficiais do Windows com o logotipo oficial do serviço, som e restauração automática da janela ao clicar no alerta.
 4. **Favicon Dinâmico**: Resolve automaticamente o ícone oficial da página web em execução e atualiza o ícone da janela e da bandeja (**System Tray**) sem necessidade de embutir arquivos `.ico` proprietários no repositório.
+5. **Ícone Customizado e Invalidação Atômica de Cache**: Suporte opcional a ícones personalizados via `Window:IconPath` (aceitando `.ico` e `.png` com conversão em tempo de execução). Ao alterar o ícone, o host expurga automaticamente o cache do registro do Windows (`HKCU\...\Notifications\Settings\<AUMID>`) e notifica a Shell do Windows (`SHChangeNotify`) para refletir o novo ícone imediatamente nas notificações, sem exigir intervenção manual no registro.
 
 ---
 
@@ -19,7 +20,7 @@ O projeto foi projetado para resolver o problema de serviços web e mensageiros 
 
 * **Host Runtime**: .NET 10 (C# 14 / Windows Forms com suporte a DPI avançado).
 * **Browser Engine**: Microsoft Edge WebView2 Runtime (Evergreen).
-* **Subsistema de Notificações**: `Microsoft.Toolkit.Uwp.Notifications` com registro formal de AUMID no Windows Shell (`IPropertyStore` / `IShellLinkW`).
+* **Subsistema de Notificações**: `Microsoft.Toolkit.Uwp.Notifications` com registro formal de AUMID no Windows Shell (`IPropertyStore` / `IShellLinkW`) e invalidação atômica de cache via Win32 Shell API (`SHChangeNotify` / `SHCNE_ASSOCCHANGED`).
 * **Configuração em Camadas**: Carregamento hierárquico via `Microsoft.Extensions.Configuration` (Linha de Comando > Variáveis de Ambiente `WEBTRAY_` > `appsettings.json` > `appsettings.sample.json`).
 
 ---
@@ -171,10 +172,31 @@ dotnet run
 ```
 
 ### Publicação para Produção (Executável Único)
-Para gerar um executável otimizado e autocontido:
+
+Para gerar um executável otimizado via CLI do .NET:
 
 ```powershell
 dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o ./publish
 ```
 
 O binário resultante estará disponível na pasta `./publish/WebTrayHost.exe`.
+
+---
+
+## 📦 Automação de Releases (`build-release.ps1`)
+
+O repositório inclui o script automatizado `build-release.ps1` para geração padronizada de entregáveis com sanitização de configurações e cálculo de integridade:
+
+```powershell
+# Compila automaticamente ambas as variantes (Framework-Dependent e Self-Contained)
+# e infere a versão diretamente da tag Git ativa:
+.\build-release.ps1
+
+# Compila versão específica explicitamente:
+.\build-release.ps1 -Version "1.1.0"
+
+# Compila apenas a variante 100% autocontida (~50MB):
+.\build-release.ps1 -SelfContainedOnly
+```
+
+Os pacotes `.zip` e seus manifestos criptográficos `.sha256` são gerados na pasta `./dist`.
