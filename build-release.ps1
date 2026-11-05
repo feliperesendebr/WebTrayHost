@@ -3,36 +3,43 @@
     Script automatizado de compilação, empacotamento e geração de Release local para o WebTrayHost.
 
 .DESCRIPTION
-    Realiza o build otimizado em modo Release para a arquitetura win-x64 em binário único (Single-File),
-    higieniza as configurações para impedir vazamento de dados locais sensíveis, embute a documentação oficial
-    e gera o pacote .zip final acompanhado do cálculo do checksum SHA-256.
+    Resolve automaticamente a versão semântica a partir da tag Git atual (ex: v1.0.0 -> 1.0.0).
+    Por padrão, compila e empacota AMBAS as variantes para win-x64:
+      1. Framework-Dependent (~6.7 MB, requer .NET Desktop Runtime 10)
+      2. Self-Contained (~50 MB, 100% autônomo sem dependências externas)
+    Higieniza configurações sensíveis e calcula manifestos criptográficos SHA-256.
 
 .PARAMETER Version
-    Versão semântica da release (Padrão: "1.0.0").
+    Versão semântica da release. Se omitido, resolve automaticamente da tag Git ativa ou fallback para "1.0.0".
 
-.PARAMETER SelfContained
-    Se especificado, gera o binário 100% autocontido incluindo o runtime .NET (~50MB).
-    Se omitido (e sem -Both), gera o binário Framework-Dependent que requer .NET Desktop Runtime 10 (~6.7MB).
+.PARAMETER FrameworkDependentOnly
+    Se especificado, compila apenas a versão que consome o runtime instalado no sistema.
+
+.PARAMETER SelfContainedOnly
+    Se especificado, compila apenas a versão autocontida autônoma.
 
 .PARAMETER Both
-    Se especificado, compila e empacota AMBAS as variantes (Framework-Dependent e Self-Contained) no mesmo diretório de saída.
+    Mantido para compatibilidade. O comportamento padrão já é compilar ambas as variantes.
 
 .PARAMETER OutputDir
     Diretório de saída para os pacotes gerados (Padrão: ".\dist").
 
 .EXAMPLE
-    .\build-release.ps1 -Version "1.0.0" -Both
-    .\build-release.ps1 -Version "1.0.0"
-    .\build-release.ps1 -Version "1.0.0" -SelfContained
+    .\build-release.ps1
+    .\build-release.ps1 -Version "1.1.0"
+    .\build-release.ps1 -SelfContainedOnly
 #>
 
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [string]$Version = "1.0.0",
+    [string]$Version = "",
 
     [Parameter()]
-    [switch]$SelfContained,
+    [switch]$FrameworkDependentOnly,
+
+    [Parameter()]
+    [switch]$SelfContainedOnly,
 
     [Parameter()]
     [switch]$Both,
@@ -51,12 +58,33 @@ if ([string]::IsNullOrWhiteSpace($scriptRoot)) {
 
 Set-Location $scriptRoot
 
+# 1. Resolução Automática de Versão a partir do Git Tag
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    try {
+        $gitTag = (& git -C $scriptRoot describe --tags --exact-match 2>$null)
+        if (-not $gitTag) {
+            $gitTag = (& git -C $scriptRoot describe --tags --abbrev=0 2>$null)
+        }
+        if ($gitTag) {
+            $Version = ($gitTag -replace '^v', '').Trim()
+            Write-Host " -> Versão detectada automaticamente via Git Tag: $Version" -ForegroundColor Cyan
+        }
+    } catch {
+        # Fallback silencioso se o Git não estiver disponível
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        $Version = "1.0.0"
+        Write-Host " -> Nenhuma tag Git detectada. Utilizando versão padrão: $Version" -ForegroundColor Gray
+    }
+}
+
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host " [WebTrayHost] Gerador de Release Automatizado (v$Version) " -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
-# 1. Validação de Pré-requisitos
-Write-Host "`n[1/4] Verificando ambiente de compilação..." -ForegroundColor Yellow
+# 2. Validação de Pré-requisitos
+Write-Host "`n[1/3] Verificando ambiente de compilação..." -ForegroundColor Yellow
 if (-not (Get-Command "dotnet" -ErrorAction SilentlyContinue)) {
     Write-Error "O comando 'dotnet' não foi encontrado no PATH do sistema. Instale o .NET SDK 10."
 }
@@ -163,18 +191,27 @@ function Build-VariantPackage {
     }
 }
 
-# 2. Execução dos Builds
-if ($Both) {
-    Build-VariantPackage -IsSelfContained $false
-    Build-VariantPackage -IsSelfContained $true
-} elseif ($SelfContained) {
-    Build-VariantPackage -IsSelfContained $true
-} else {
+# 3. Determinação de Variantes a Compilar
+$shouldBuildFramework = $true
+$shouldBuildSelfContained = $true
+
+if ($FrameworkDependentOnly) {
+    $shouldBuildSelfContained = $false
+} elseif ($SelfContainedOnly) {
+    $shouldBuildFramework = $false
+}
+
+Write-Host "`n[2/3] Executando compilação das variantes selecionadas..." -ForegroundColor Yellow
+if ($shouldBuildFramework) {
     Build-VariantPackage -IsSelfContained $false
 }
 
-Write-Host "`n==========================================================" -ForegroundColor Green
-Write-Host " Processo de Release Concluído com Sucesso!" -ForegroundColor Green
+if ($shouldBuildSelfContained) {
+    Build-VariantPackage -IsSelfContained $true
+}
+
+Write-Host "`n[3/3] Processo de Release Concluído com Sucesso!" -ForegroundColor Green
+Write-Host "==========================================================" -ForegroundColor Green
 Write-Host " Diretório de Saída: $resolvedOutputDir" -ForegroundColor White
 Get-ChildItem -Path $resolvedOutputDir -Filter "WebTrayHost-win-x64-v$Version*" | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
 Write-Host "==========================================================" -ForegroundColor Green

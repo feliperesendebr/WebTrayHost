@@ -29,6 +29,7 @@ public partial class MainForm : Form
     private readonly string _cachedFaviconPngPath;
 
     private bool _isExiting;
+    private bool _hasConfiguredIcon;
     private string _lastNotificationFingerprint = string.Empty;
     private DateTime _lastNotificationTime = DateTime.MinValue;
     private Icon? _currentCustomIcon;
@@ -52,7 +53,10 @@ public partial class MainForm : Form
 
         ConfigureSystemTray();
         ConfigureToastActivation();
-        LoadCachedFaviconIfExists();
+        if (!TryLoadConfiguredCustomIcon())
+        {
+            LoadCachedFaviconIfExists();
+        }
         EnsureStartMenuShortcut();
     }
 
@@ -85,6 +89,79 @@ public partial class MainForm : Form
         _notifyIcon.ContextMenuStrip = _trayContextMenu;
         _notifyIcon.Visible = true;
         _notifyIcon.DoubleClick += (s, e) => ToggleVisibility();
+    }
+
+    private bool TryLoadConfiguredCustomIcon()
+    {
+        try
+        {
+            string? rawPath = _settings.Window.IconPath;
+            if (string.IsNullOrWhiteSpace(rawPath)) return false;
+
+            string expandedPath = Environment.ExpandEnvironmentVariables(rawPath.Trim());
+            string fullPath = Path.IsPathRooted(expandedPath)
+                ? expandedPath
+                : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, expandedPath));
+
+            if (!File.Exists(fullPath))
+            {
+                System.Diagnostics.Debug.WriteLine($"[WebTrayHost] Arquivo de ícone customizado não encontrado: {fullPath}");
+                return false;
+            }
+
+            string ext = Path.GetExtension(fullPath).ToLowerInvariant();
+            Icon? iconToApply = null;
+
+            if (ext == ".ico")
+            {
+                using var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                var loadedIcon = new Icon(fs);
+                iconToApply = (Icon)loadedIcon.Clone();
+
+                SaveFaviconIcoToDisk(iconToApply);
+                using var bmp = iconToApply.ToBitmap();
+                using var highResBmp = CreateHighResBitmap(bmp, 96);
+                Directory.CreateDirectory(_expandedDataFolder);
+                highResBmp.Save(_cachedFaviconPngPath, ImageFormat.Png);
+            }
+            else if (ext is ".png" or ".jpg" or ".jpeg" or ".bmp")
+            {
+                using var img = Image.FromFile(fullPath);
+                using var highResBmp = CreateHighResBitmap(img, 96);
+                Directory.CreateDirectory(_expandedDataFolder);
+                highResBmp.Save(_cachedFaviconPngPath, ImageFormat.Png);
+
+                IntPtr hIcon = highResBmp.GetHicon();
+                try
+                {
+                    using var tempIcon = Icon.FromHandle(hIcon);
+                    iconToApply = (Icon)tempIcon.Clone();
+                    SaveFaviconIcoToDisk(iconToApply);
+                }
+                finally
+                {
+                    DestroyIcon(hIcon);
+                }
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[WebTrayHost] Formato de ícone não suportado: '{ext}'. Utilize .ico ou .png.");
+                return false;
+            }
+
+            if (iconToApply != null)
+            {
+                ApplyDynamicIcon(iconToApply);
+                _hasConfiguredIcon = true;
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[WebTrayHost] Falha ao carregar ícone customizado: {ex.Message}");
+        }
+
+        return false;
     }
 
     private void LoadCachedFaviconIfExists()
@@ -224,6 +301,8 @@ public partial class MainForm : Form
 
     private async void OnFaviconChangedAsync(object? sender, object e)
     {
+        if (_hasConfiguredIcon) return;
+
         try
         {
             using var stream = await _webView.CoreWebView2.GetFaviconAsync(CoreWebView2FaviconImageFormat.Png);

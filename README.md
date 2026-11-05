@@ -36,6 +36,7 @@ Copie o arquivo `appsettings.sample.json` para `appsettings.json` e ajuste os pa
 {
   "Window": {
     "Title": "Meu Aplicativo de Mensagens",
+    "IconPath": "",
     "Width": 1280,
     "Height": 850,
     "StartMinimized": false,
@@ -62,6 +63,7 @@ Copie o arquivo `appsettings.sample.json` para `appsettings.json` e ajuste os pa
 | Seção | Propriedade | Tipo | Descrição |
 | :--- | :--- | :--- | :--- |
 | **Window** | `Title` | `string` | Título da janela e nome exibido no ícone da bandeja e no cabeçalho do Toast. |
+| **Window** | `IconPath` | `string` | Caminho opcional para arquivo `.ico` ou `.png` personalizado. Se omitido, extrai automaticamente o favicon da página. Suporta variáveis de ambiente (ex: `%LOCALAPPDATA%`) e caminhos relativos ao executável. |
 | **Window** | `Width` / `Height` | `int` | Dimensões iniciais da janela em pixels. |
 | **Window** | `StartMinimized` | `bool` | Inicia a aplicação com a janela minimizada na barra de tarefas. |
 | **Window** | `StartHiddenInTray` | `bool` | Inicia o aplicativo diretamente oculto na bandeja do sistema. |
@@ -104,6 +106,7 @@ Crie ou ajuste o seu arquivo `appsettings.json` na raiz da aplicação (ou junto
 {
   "Window": {
     "Title": "Microsoft Teams",
+    "IconPath": "",
     "Width": 1280,
     "Height": 850,
     "StartMinimized": false,

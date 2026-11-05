@@ -16,6 +16,13 @@ public class WindowSettings
     public bool StartHiddenInTray { get; set; } = false;
     public bool CloseToTray { get; set; } = true;
     public bool MinimizeToTray { get; set; } = true;
+
+    /// <summary>
+    /// Caminho opcional para arquivo de ícone (.ico ou .png).
+    /// Se informado e o arquivo existir, substitui a extração automática do favicon da página.
+    /// Suporta variáveis de ambiente (ex: %LOCALAPPDATA%\...) e caminhos relativos ao executável.
+    /// </summary>
+    public string? IconPath { get; set; }
 }
 
 public class WebSettings
