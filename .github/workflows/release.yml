@@ -10,11 +10,6 @@ on:
         description: 'Versão da release (ex: 1.0.0)'
         required: true
         default: '1.0.0'
-      self_contained:
-        description: 'Gerar versão autocontida (Self-Contained)?'
-        type: boolean
-        required: false
-        default: false
 
 permissions:
   contents: write
@@ -38,26 +33,23 @@ jobs:
       - name: Validar Versão do SDK
         run: dotnet --version
 
-      - name: Executar Script de Release
+      - name: Executar Script de Release (Compila Ambas as Variantes)
         shell: pwsh
         run: |
           # Determina a versão semântica a partir da tag Git ou do input manual
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
             $ver = "${{ github.event.inputs.version }}"
-            $selfContained = [System.Convert]::ToBoolean("${{ github.event.inputs.self_contained }}")
           } else {
             $tag = "${{ github.ref_name }}"
             $ver = $tag -replace '^v', ''
-            $selfContained = $false
           }
 
-          Write-Host "Iniciando geração de release para a versão: $ver (SelfContained=$selfContained)"
-
-          if ($selfContained) {
-            .\build-release.ps1 -Version $ver -SelfContained
-          } else {
-            .\build-release.ps1 -Version $ver
+          if ([string]::IsNullOrWhiteSpace($ver)) {
+            $ver = "1.0.0"
           }
+
+          Write-Host "Iniciando geração de release completa (Framework-Dependent e Self-Contained) para v$ver..."
+          .\build-release.ps1 -Version $ver -Both
 
       - name: Publicar Release no GitHub
         uses: softprops/action-gh-release@v2
