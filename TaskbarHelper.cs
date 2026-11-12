@@ -47,7 +47,7 @@ internal sealed class TaskbarHelper : IDisposable
         }
     }
 
-    public void UpdateOverlayBadge(IntPtr hwnd, bool showBadge, int unreadCount)
+    public void UpdateOverlayBadge(IntPtr hwnd, bool showBadge, int unreadCount, string? badgeColorSetting = null)
     {
         if (_disposed || hwnd == IntPtr.Zero) return;
 
@@ -62,7 +62,7 @@ internal sealed class TaskbarHelper : IDisposable
                 return;
             }
 
-            using var overlayIcon = CreateTaskbarBadgeIcon(unreadCount);
+            using var overlayIcon = CreateTaskbarBadgeIcon(unreadCount, badgeColorSetting);
             string description = unreadCount > 0 ? $"{unreadCount} notificações não lidas" : "Nova notificação";
             _taskbarList.SetOverlayIcon(hwnd, overlayIcon.Handle, description);
         }
@@ -72,10 +72,10 @@ internal sealed class TaskbarHelper : IDisposable
         }
     }
 
-    private static Icon CreateTaskbarBadgeIcon(int unreadCount)
+    private static Icon CreateTaskbarBadgeIcon(int unreadCount, string? badgeColorSetting)
     {
         const int size = 32;
-        var (fillColor, textColor, borderColor) = GetNativeBadgeColors();
+        var (fillColor, textColor) = ResolveBadgeColors(badgeColorSetting);
 
         using var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
         using (var g = Graphics.FromImage(bmp))
@@ -85,35 +85,28 @@ internal sealed class TaskbarHelper : IDisposable
             g.CompositingQuality = CompositingQuality.HighQuality;
             g.Clear(Color.Transparent);
 
-            // Cápsula horizontal (pill) estilo badge nativo do Windows 11
-            const float pillWidth = 31.5f;
-            const float pillHeight = 25.0f;
+            // Cápsula horizontal maximizada sem borda escura (ocupa o limite físico do slot 32x32)
+            const float pillWidth = 31.8f;
+            const float pillHeight = 29.0f;
             float pillX = (size - pillWidth) / 2.0f;
             float pillY = (size - pillHeight) / 2.0f;
-            const float border = 1.25f;
 
-            var outerRect = new RectangleF(pillX, pillY, pillWidth, pillHeight);
-            using (var outerPath = CreatePillPath(outerRect))
-            using (var borderBrush = new SolidBrush(borderColor))
-            {
-                g.FillPath(borderBrush, outerPath);
-            }
-
-            var innerRect = new RectangleF(
-                pillX + border,
-                pillY + border,
-                pillWidth - (border * 2),
-                pillHeight - (border * 2));
-            using (var innerPath = CreatePillPath(innerRect))
+            var pillRect = new RectangleF(pillX, pillY, pillWidth, pillHeight);
+            using (var pillPath = CreatePillPath(pillRect))
             using (var fillBrush = new SolidBrush(fillColor))
             {
-                g.FillPath(fillBrush, innerPath);
+                g.FillPath(fillBrush, pillPath);
             }
 
             if (unreadCount > 0)
             {
-                string label = unreadCount > 9 ? "9+" : unreadCount.ToString();
-                float emSize = label.Length > 1 ? 16.5f : 20.5f;
+                string label = unreadCount > 99 ? "99+" : unreadCount.ToString();
+                float emSize = label.Length switch
+                {
+                    >= 3 => 14.0f,
+                    2 => 18.5f,
+                    _ => 25.0f
+                };
 
                 using var family = new FontFamily("Segoe UI");
                 using var path = new GraphicsPath();
@@ -125,19 +118,10 @@ internal sealed class TaskbarHelper : IDisposable
                     PointF.Empty,
                     StringFormat.GenericTypographic);
 
-                // Centraliza exatamente pela caixa delimitadora visual do glifo
-                RectangleF bounds = path.GetBounds();
-                if (bounds.Width > 0 && bounds.Height > 0)
-                {
-                    float dx = (size / 2.0f) - (bounds.X + bounds.Width / 2.0f);
-                    float dy = (size / 2.0f) - (bounds.Y + bounds.Height / 2.0f);
-                    using var matrix = new Matrix();
-                    matrix.Translate(dx, dy);
-                    path.Transform(matrix);
+                CenterGlyphOptically(path, size, label.Length);
 
-                    using var textBrush = new SolidBrush(textColor);
-                    g.FillPath(textBrush, path);
-                }
+                using var textBrush = new SolidBrush(textColor);
+                g.FillPath(textBrush, path);
             }
         }
 
@@ -153,6 +137,63 @@ internal sealed class TaskbarHelper : IDisposable
         }
     }
 
+    private static void CenterGlyphOptically(GraphicsPath path, int canvasSize, int charCount)
+    {
+        RectangleF bounds = path.GetBounds();
+        if (bounds.Width <= 0 || bounds.Height <= 0) return;
+
+        float center = canvasSize / 2.0f;
+        float dx = center - (bounds.X + bounds.Width / 2.0f);
+        float dy = center - (bounds.Y + bounds.Height / 2.0f);
+
+        using (var initialMatrix = new Matrix())
+        {
+            initialMatrix.Translate(dx, dy);
+            path.Transform(initialMatrix);
+        }
+
+        // Calcula o centroide óptico real (ponderado pelo alpha dos pixels) para corrigir dígitos assimétricos como "1", "3", "4" e "7"
+        using var measureBmp = new Bitmap(canvasSize, canvasSize, PixelFormat.Format32bppArgb);
+        using (var mg = Graphics.FromImage(measureBmp))
+        {
+            mg.SmoothingMode = SmoothingMode.AntiAlias;
+            mg.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            mg.Clear(Color.Transparent);
+            mg.FillPath(Brushes.White, path);
+        }
+
+        double sumX = 0;
+        double sumY = 0;
+        double totalAlpha = 0;
+
+        for (int py = 0; py < canvasSize; py++)
+        {
+            for (int px = 0; px < canvasSize; px++)
+            {
+                byte alpha = measureBmp.GetPixel(px, py).A;
+                if (alpha > 0)
+                {
+                    sumX += (px + 0.5) * alpha;
+                    sumY += (py + 0.5) * alpha;
+                    totalAlpha += alpha;
+                }
+            }
+        }
+
+        if (totalAlpha <= 0) return;
+
+        float centroidX = (float)(sumX / totalAlpha);
+        float centroidY = (float)(sumY / totalAlpha);
+        float weight = charCount == 1 ? 0.95f : (charCount == 2 ? 0.55f : 0.35f);
+
+        float optDx = (center - centroidX) * weight;
+        float optDy = (center - centroidY) * weight;
+
+        using var optMatrix = new Matrix();
+        optMatrix.Translate(optDx, optDy);
+        path.Transform(optMatrix);
+    }
+
     private static GraphicsPath CreatePillPath(RectangleF rect)
     {
         var path = new GraphicsPath();
@@ -163,10 +204,36 @@ internal sealed class TaskbarHelper : IDisposable
         return path;
     }
 
-    private static (Color Fill, Color Text, Color Border) GetNativeBadgeColors()
+    private static (Color Fill, Color Text) ResolveBadgeColors(string? badgeColorSetting)
     {
         bool isLightTaskbar = IsSystemLightTheme();
 
+        if (string.Equals(badgeColorSetting?.Trim(), "Auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return GetWindowsAccentBadgeColors(isLightTaskbar);
+        }
+
+        Color fill = Color.FromArgb(255, 209, 52, 56); // Padrão #D13438 (vermelho Fluent / Teams suavizado)
+        if (!string.IsNullOrWhiteSpace(badgeColorSetting))
+        {
+            try
+            {
+                Color parsed = ColorTranslator.FromHtml(badgeColorSetting.Trim());
+                fill = Color.FromArgb(255, parsed.R, parsed.G, parsed.B);
+            }
+            catch
+            {
+                // Mantém vermelho padrão caso o código hexadecimal informado seja inválido
+            }
+        }
+
+        double luminance = (0.299 * fill.R) + (0.587 * fill.G) + (0.114 * fill.B);
+        Color text = luminance > 155 ? Color.FromArgb(255, 17, 17, 17) : Color.White;
+        return (fill, text);
+    }
+
+    private static (Color Fill, Color Text) GetWindowsAccentBadgeColors(bool isLightTaskbar)
+    {
         try
         {
             var uiSettings = new Windows.UI.ViewManagement.UISettings();
@@ -176,14 +243,13 @@ internal sealed class TaskbarHelper : IDisposable
 
             var fill = Color.FromArgb(255, winColor.R, winColor.G, winColor.B);
             var text = isLightTaskbar ? Color.White : Color.FromArgb(255, 17, 17, 17);
-            var border = isLightTaskbar ? Color.White : Color.FromArgb(230, 24, 24, 24);
-            return (fill, text, border);
+            return (fill, text);
         }
         catch
         {
             return isLightTaskbar
-                ? (Color.FromArgb(255, 0, 95, 184), Color.White, Color.White)
-                : (Color.FromArgb(255, 96, 205, 255), Color.FromArgb(255, 17, 17, 17), Color.FromArgb(230, 24, 24, 24));
+                ? (Color.FromArgb(255, 0, 95, 184), Color.White)
+                : (Color.FromArgb(255, 96, 205, 255), Color.FromArgb(255, 17, 17, 17));
         }
     }
 

@@ -46,10 +46,17 @@ public class NotificationSettings
     public bool EnableCustomToastNotifications { get; set; } = true;
 
     /// <summary>
-    /// Exibe uma bolinha vermelha de notificação sobre o ícone na bandeja (System Tray) e na Barra de Tarefas
+    /// Exibe uma bolinha de notificação sobre o ícone na bandeja (System Tray) e na Barra de Tarefas
     /// quando houver mensagens não lidas ou notificações pendentes.
     /// </summary>
     public bool ShowTrayUnreadBadge { get; set; } = true;
+
+    /// <summary>
+    /// Cor do badge exibido sobre o ícone na Barra de Tarefas.
+    /// Padrão "#D13438" (vermelho Fluent / Teams suavizado). Cor azul anterior (estilo WhatsApp / Windows 11): "#60CDFF"
+    /// (ou "#005FB8" para tema claro, ou "Auto" para usar a cor de destaque nativa do tema do Windows).
+    /// </summary>
+    public string TaskbarBadgeColor { get; set; } = "#D13438";
 
     /// <summary>
     /// Monitora contadores de mensagens não lidas no título da página (ex: "(1) Conversas").

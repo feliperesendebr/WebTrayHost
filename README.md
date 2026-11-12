@@ -54,6 +54,7 @@ Copie o arquivo `appsettings.sample.json` para `appsettings.json` e ajuste os pa
   "Notifications": {
     "EnableCustomToastNotifications": true,
     "ShowTrayUnreadBadge": true,
+    "TaskbarBadgeColor": "#D13438", // Cor azul anterior: "#60CDFF" (ou "Auto" para cor nativa do Windows)
     "MonitorDocumentTitle": true,
     "TitleNotificationRegex": "^\\((\\d+)\\)",
     "PlaySound": true
@@ -77,7 +78,8 @@ Copie o arquivo `appsettings.sample.json` para `appsettings.json` e ajuste os pa
 | **Web** | `UserDataFolder` | `string` | Caminho do perfil de cookies/cache. Suporta variáveis do Windows como `%LOCALAPPDATA%`. |
 | **Web** | `UserAgent` | `string` | Substitui o cabeçalho User-Agent (opcional). |
 | **Notifications** | `EnableCustomToastNotifications` | `bool` | Ativa o disparo de banners nativos do Windows pelo aplicativo C#. |
-| **Notifications** | `ShowTrayUnreadBadge` | `bool` | Exibe bolinha vermelha de alerta sobre o ícone do **System Tray** e da **Barra de Tarefas** quando há notificações ou mensagens não lidas. |
+| **Notifications** | `ShowTrayUnreadBadge` | `bool` | Exibe badge de alerta no **System Tray** (bolinha vermelha) e na **Barra de Tarefas** (cápsula com contagem) quando há notificações ou mensagens não lidas. |
+| **Notifications** | `TaskbarBadgeColor` | `string` | Cor do badge na **Barra de Tarefas** (`"#D13438"` padrão vermelho Teams). Aceita qualquer hex (ex: `"#60CDFF"`, `"#25D366"`) ou `"Auto"` para a cor de destaque nativa do Windows. |
 | **Notifications** | `MonitorDocumentTitle` | `bool` | Monitora contadores de mensagens não lidas no título da página. |
 | **Notifications** | `TitleNotificationRegex` | `string` | Expressão regular para extrair contadores numéricos de mensagens (padrão: `^\\((\\d+)\\)`). |
 | **Notifications** | `PlaySound` | `bool` | Emite o alerta sonoro padrão do sistema ao exibir o Toast. |
@@ -128,6 +130,7 @@ Crie ou ajuste o seu arquivo `appsettings.json` na raiz da aplicação (ou junto
   "Notifications": {
     "EnableCustomToastNotifications": true,
     "ShowTrayUnreadBadge": true,
+    "TaskbarBadgeColor": "#D13438", // Cor azul anterior: "#60CDFF" (ou "Auto" para cor nativa do Windows)
     "MonitorDocumentTitle": true,
     "TitleNotificationRegex": "^\\((\\d+)\\)",
     "PlaySound": true

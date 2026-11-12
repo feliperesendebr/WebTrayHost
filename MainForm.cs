@@ -426,7 +426,7 @@ public partial class MainForm : Form
         // Na Barra de Tarefas, aplica o badge nativo do Windows via ITaskbarList3.SetOverlayIcon
         if (IsHandleCreated)
         {
-            _taskbarHelper.UpdateOverlayBadge(Handle, showBadge, _unreadCount);
+            _taskbarHelper.UpdateOverlayBadge(Handle, showBadge, _unreadCount, _settings.Notifications.TaskbarBadgeColor);
         }
     }
 
@@ -447,26 +447,63 @@ public partial class MainForm : Form
                 g.DrawImage(baseBmp, new Rectangle(0, 0, size, size));
             }
 
-            // Bolinha vermelha estilo Microsoft Teams no canto inferior direito
-            float outerDiameter = size * 0.48f;
-            float x = size - outerDiameter;
-            float y = size - outerDiameter;
-            float border = size * 0.045f;
+            // Bolinha vermelha ampliada, deslocada à direita, com borda escura e sino branco maior (estilo Microsoft Teams)
+            float outerDiameter = size * 0.62f;
+            float border = size * 0.028f;
+            float x = size - outerDiameter + 1.0f;
+            float y = size - outerDiameter + 0.8f;
 
-            using (var borderBrush = new SolidBrush(Color.White))
+            using (var borderBrush = new SolidBrush(Color.FromArgb(255, 28, 28, 28)))
             {
                 g.FillEllipse(borderBrush, x, y, outerDiameter, outerDiameter);
             }
 
-            using (var redBrush = new SolidBrush(Color.FromArgb(232, 17, 35)))
+            float innerDiameter = outerDiameter - (border * 2);
+            using (var redBrush = new SolidBrush(Color.FromArgb(209, 52, 56)))
             {
-                g.FillEllipse(
-                    redBrush,
-                    x + border,
-                    y + border,
-                    outerDiameter - (border * 2),
-                    outerDiameter - (border * 2));
+                g.FillEllipse(redBrush, x + border, y + border, innerDiameter, innerDiameter);
             }
+
+            // Desenho vetorial do sininho branco ampliado centralizado dentro do círculo vermelho
+            float cx = x + (outerDiameter / 2.0f);
+            float cy = y + (outerDiameter / 2.0f);
+            float r = innerDiameter * 0.35f;
+
+            using var bellBrush = new SolidBrush(Color.White);
+            using (var bellPath = new GraphicsPath())
+            {
+                // Cúpula arredondada do sino
+                bellPath.AddArc(cx - (0.48f * r), cy - (0.78f * r), 0.96f * r, 0.88f * r, 180, 180);
+
+                // Lateral direita abrindo até a borda inferior
+                bellPath.AddBezier(
+                    cx + (0.48f * r), cy - (0.34f * r),
+                    cx + (0.48f * r), cy + (0.10f * r),
+                    cx + (0.76f * r), cy + (0.34f * r),
+                    cx + (0.84f * r), cy + (0.46f * r));
+
+                // Base horizontal inferior do sino
+                bellPath.AddLine(cx + (0.84f * r), cy + (0.46f * r), cx - (0.84f * r), cy + (0.46f * r));
+
+                // Lateral esquerda subindo de volta ao ombro
+                bellPath.AddBezier(
+                    cx - (0.84f * r), cy + (0.46f * r),
+                    cx - (0.76f * r), cy + (0.34f * r),
+                    cx - (0.48f * r), cy + (0.10f * r),
+                    cx - (0.48f * r), cy - (0.34f * r));
+
+                bellPath.CloseFigure();
+                g.FillPath(bellBrush, bellPath);
+            }
+
+            // Badalo inferior do sino
+            float clapperRadius = 0.22f * r;
+            g.FillEllipse(
+                bellBrush,
+                cx - clapperRadius,
+                cy + (0.56f * r),
+                clapperRadius * 2,
+                clapperRadius * 2);
         }
 
         IntPtr hIcon = bmp.GetHicon();
@@ -758,7 +795,7 @@ public partial class MainForm : Form
         if (m.Msg == _taskbarHelper.TaskbarButtonCreatedMessage)
         {
             bool showBadge = _isBadgeCurrentlyShown && _settings.Notifications.ShowTrayUnreadBadge;
-            _taskbarHelper.UpdateOverlayBadge(Handle, showBadge, _unreadCount);
+            _taskbarHelper.UpdateOverlayBadge(Handle, showBadge, _unreadCount, _settings.Notifications.TaskbarBadgeColor);
         }
 
         base.WndProc(ref m);
