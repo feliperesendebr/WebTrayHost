@@ -19,6 +19,9 @@ public partial class MainForm : Form
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DestroyIcon(IntPtr handle);
 
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
     private readonly AppSettings _settings;
     private readonly string _aumid;
     private readonly WebView2 _webView;
@@ -27,12 +30,20 @@ public partial class MainForm : Form
     private readonly string _expandedDataFolder;
     private readonly string _cachedFaviconIcoPath;
     private readonly string _cachedFaviconPngPath;
+    private readonly TaskbarHelper _taskbarHelper = new();
 
     private bool _isExiting;
     private bool _hasConfiguredIcon;
+    private bool _suppressHideOnNextMinimize;
+    private bool _hasTitleUnreadBadge;
+    private bool _hasNotificationBadge;
+    private bool _isBadgeCurrentlyShown;
+    private int _unreadCount;
+    private int _displayedUnreadCount;
     private string _lastNotificationFingerprint = string.Empty;
     private DateTime _lastNotificationTime = DateTime.MinValue;
-    private Icon? _currentCustomIcon;
+    private Icon? _baseIcon;
+    private Icon? _badgedIcon;
 
     public MainForm(AppSettings settings, string aumid)
     {
@@ -254,6 +265,9 @@ public partial class MainForm : Form
             // Registro de favicon dinâmico
             _webView.CoreWebView2.FaviconChanged += OnFaviconChangedAsync;
 
+            // Monitoramento nativo de alterações no título da página (ex: "(1) Microsoft Teams")
+            _webView.CoreWebView2.DocumentTitleChanged += OnDocumentTitleChanged;
+
             // Permissões automáticas para notificações e chamadas (áudio/vídeo)
             _webView.CoreWebView2.PermissionRequested += OnPermissionRequested;
 
@@ -291,12 +305,18 @@ public partial class MainForm : Form
         // Marca como tratada para sinalizar ao Chromium que o host consumiu a mensagem
         e.Handled = true;
 
-        if (!_settings.Notifications.EnableCustomToastNotifications) return;
-
         string title = string.IsNullOrWhiteSpace(e.Notification.Title) ? _settings.Window.Title : e.Notification.Title;
         string body = e.Notification.Body ?? string.Empty;
 
         HandleIncomingNotification(title, body);
+    }
+
+    private void OnDocumentTitleChanged(object? sender, object e)
+    {
+        if (!_settings.Notifications.MonitorDocumentTitle) return;
+
+        string title = _webView.CoreWebView2?.DocumentTitle ?? string.Empty;
+        HandleTitleChange(title);
     }
 
     private async void OnFaviconChangedAsync(object? sender, object e)
@@ -364,16 +384,119 @@ public partial class MainForm : Form
             return;
         }
 
-        var oldIcon = _currentCustomIcon;
-        _currentCustomIcon = newIcon;
+        var oldBase = _baseIcon;
+        var oldBadged = _badgedIcon;
 
-        Icon = newIcon;
-        _notifyIcon.Icon = newIcon;
+        _baseIcon = newIcon;
+        _badgedIcon = CreateBadgedIcon(newIcon);
 
-        if (oldIcon != null && oldIcon != SystemIcons.Application)
+        RefreshDisplayedIcon();
+
+        if (oldBase != null && oldBase != SystemIcons.Application)
         {
-            oldIcon.Dispose();
+            oldBase.Dispose();
         }
+        oldBadged?.Dispose();
+    }
+
+    private void RefreshDisplayedIcon()
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(RefreshDisplayedIcon);
+            return;
+        }
+
+        Icon baseToUse = _baseIcon ?? SystemIcons.Application;
+        bool showBadge = _isBadgeCurrentlyShown && _settings.Notifications.ShowTrayUnreadBadge;
+
+        // Mantém o ícone da janela/Barra de Tarefas limpo e aplica a bolinha vermelha no System Tray
+        Icon = baseToUse;
+
+        if (showBadge)
+        {
+            _badgedIcon ??= CreateBadgedIcon(baseToUse);
+            _notifyIcon.Icon = _badgedIcon;
+        }
+        else
+        {
+            _notifyIcon.Icon = baseToUse;
+        }
+
+        // Na Barra de Tarefas, aplica o badge nativo do Windows via ITaskbarList3.SetOverlayIcon
+        if (IsHandleCreated)
+        {
+            _taskbarHelper.UpdateOverlayBadge(Handle, showBadge, _unreadCount);
+        }
+    }
+
+    private static Icon CreateBadgedIcon(Icon sourceIcon)
+    {
+        const int size = 64;
+        using var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.CompositingQuality = CompositingQuality.HighQuality;
+            g.Clear(Color.Transparent);
+
+            using (var baseBmp = sourceIcon.ToBitmap())
+            {
+                g.DrawImage(baseBmp, new Rectangle(0, 0, size, size));
+            }
+
+            // Bolinha vermelha estilo Microsoft Teams no canto inferior direito
+            float outerDiameter = size * 0.48f;
+            float x = size - outerDiameter;
+            float y = size - outerDiameter;
+            float border = size * 0.045f;
+
+            using (var borderBrush = new SolidBrush(Color.White))
+            {
+                g.FillEllipse(borderBrush, x, y, outerDiameter, outerDiameter);
+            }
+
+            using (var redBrush = new SolidBrush(Color.FromArgb(232, 17, 35)))
+            {
+                g.FillEllipse(
+                    redBrush,
+                    x + border,
+                    y + border,
+                    outerDiameter - (border * 2),
+                    outerDiameter - (border * 2));
+            }
+        }
+
+        IntPtr hIcon = bmp.GetHicon();
+        try
+        {
+            using var tempIcon = Icon.FromHandle(hIcon);
+            return (Icon)tempIcon.Clone();
+        }
+        finally
+        {
+            DestroyIcon(hIcon);
+        }
+    }
+
+    private void UpdateUnreadBadgeVisualState()
+    {
+        bool shouldShow = _settings.Notifications.ShowTrayUnreadBadge && (_hasTitleUnreadBadge || _hasNotificationBadge);
+        if (shouldShow == _isBadgeCurrentlyShown && (!shouldShow || _unreadCount == _displayedUnreadCount))
+        {
+            return;
+        }
+
+        _isBadgeCurrentlyShown = shouldShow;
+        _displayedUnreadCount = shouldShow ? _unreadCount : 0;
+        RefreshDisplayedIcon();
+    }
+
+    private bool IsWindowFocused()
+    {
+        return Visible && WindowState != FormWindowState.Minimized && GetForegroundWindow() == Handle;
     }
 
     private void SaveFaviconIcoToDisk(Icon icon)
@@ -515,8 +638,6 @@ public partial class MainForm : Form
 
     private void HandleIncomingNotification(string title, string body)
     {
-        if (!_settings.Notifications.EnableCustomToastNotifications) return;
-
         string fingerprint = $"{title}|{body}";
         if (fingerprint == _lastNotificationFingerprint && (DateTime.UtcNow - _lastNotificationTime).TotalMilliseconds < 1500)
         {
@@ -526,22 +647,46 @@ public partial class MainForm : Form
         _lastNotificationFingerprint = fingerprint;
         _lastNotificationTime = DateTime.UtcNow;
 
-        DispatchWindowsNotification(title, body);
+        if (!IsWindowFocused())
+        {
+            _hasNotificationBadge = true;
+            UpdateUnreadBadgeVisualState();
+        }
+
+        if (_settings.Notifications.EnableCustomToastNotifications)
+        {
+            DispatchWindowsNotification(title, body);
+        }
     }
 
     private void HandleTitleChange(string title)
     {
         if (string.IsNullOrWhiteSpace(title)) return;
 
-        if (!Visible || WindowState == FormWindowState.Minimized)
+        var match = Regex.Match(title, _settings.Notifications.TitleNotificationRegex);
+        if (match.Success)
         {
-            var match = Regex.Match(title, _settings.Notifications.TitleNotificationRegex);
-            if (match.Success)
+            string unreadStr = match.Groups[1].Value;
+            string tooltip = $"{_settings.Window.Title} ({unreadStr} novas)";
+            _notifyIcon.Text = tooltip[..Math.Min(63, tooltip.Length)];
+            _unreadCount = int.TryParse(unreadStr, out int parsedCount) ? parsedCount : 0;
+            _hasTitleUnreadBadge = true;
+        }
+        else
+        {
+            _notifyIcon.Text = _settings.Window.Title.Length > 63
+                ? _settings.Window.Title[..63]
+                : _settings.Window.Title;
+
+            if (_hasTitleUnreadBadge)
             {
-                string unreadCount = match.Groups[1].Value;
-                _notifyIcon.Text = $"{_settings.Window.Title} ({unreadCount} novas)"[..Math.Min(63, $"{_settings.Window.Title} ({unreadCount} novas)".Length)];
+                _hasTitleUnreadBadge = false;
+                _hasNotificationBadge = false;
+                _unreadCount = 0;
             }
         }
+
+        UpdateUnreadBadgeVisualState();
     }
 
     private void DispatchWindowsNotification(string title, string body)
@@ -584,13 +729,53 @@ public partial class MainForm : Form
         BringToFront();
         Activate();
         _notifyIcon.Text = _settings.Window.Title.Length > 63 ? _settings.Window.Title[..63] : _settings.Window.Title;
+
+        _hasNotificationBadge = false;
+        if (!_hasTitleUnreadBadge)
+        {
+            _unreadCount = 0;
+        }
+        UpdateUnreadBadgeVisualState();
+    }
+
+    protected override void OnActivated(EventArgs e)
+    {
+        base.OnActivated(e);
+
+        if (_hasNotificationBadge)
+        {
+            _hasNotificationBadge = false;
+            if (!_hasTitleUnreadBadge)
+            {
+                _unreadCount = 0;
+            }
+            UpdateUnreadBadgeVisualState();
+        }
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == _taskbarHelper.TaskbarButtonCreatedMessage)
+        {
+            bool showBadge = _isBadgeCurrentlyShown && _settings.Notifications.ShowTrayUnreadBadge;
+            _taskbarHelper.UpdateOverlayBadge(Handle, showBadge, _unreadCount);
+        }
+
+        base.WndProc(ref m);
     }
 
     private void ToggleVisibility()
     {
         if (Visible && WindowState != FormWindowState.Minimized)
         {
-            Hide();
+            if (_settings.Window.MinimizeToTray)
+            {
+                Hide();
+            }
+            else
+            {
+                WindowState = FormWindowState.Minimized;
+            }
         }
         else
         {
@@ -603,7 +788,32 @@ public partial class MainForm : Form
         if (!_isExiting && _settings.Window.CloseToTray && e.CloseReason == CloseReason.UserClosing)
         {
             e.Cancel = true;
-            Hide();
+
+            if (_settings.Window.KeepInTaskbarOnClose)
+            {
+                if (!Visible)
+                {
+                    Show();
+                }
+
+                if (WindowState != FormWindowState.Minimized)
+                {
+                    _suppressHideOnNextMinimize = true;
+                    try
+                    {
+                        WindowState = FormWindowState.Minimized;
+                    }
+                    finally
+                    {
+                        _suppressHideOnNextMinimize = false;
+                    }
+                }
+            }
+            else
+            {
+                Hide();
+            }
+
             return;
         }
 
@@ -614,9 +824,13 @@ public partial class MainForm : Form
     {
         base.OnResize(e);
 
-        if (_settings.Window.MinimizeToTray && WindowState == FormWindowState.Minimized)
+        if (_settings.Window.MinimizeToTray && WindowState == FormWindowState.Minimized && !_suppressHideOnNextMinimize)
         {
             Hide();
+        }
+        else if (Visible && WindowState != FormWindowState.Minimized)
+        {
+            _notifyIcon.Text = _settings.Window.Title.Length > 63 ? _settings.Window.Title[..63] : _settings.Window.Title;
         }
     }
 
@@ -635,7 +849,12 @@ public partial class MainForm : Form
             _notifyIcon.Dispose();
             _trayContextMenu.Dispose();
             _webView.Dispose();
-            _currentCustomIcon?.Dispose();
+            _taskbarHelper.Dispose();
+            if (_baseIcon != null && _baseIcon != SystemIcons.Application)
+            {
+                _baseIcon.Dispose();
+            }
+            _badgedIcon?.Dispose();
         }
         base.Dispose(disposing);
     }

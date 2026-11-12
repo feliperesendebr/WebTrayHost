@@ -20,7 +20,7 @@ O projeto foi projetado para resolver o problema de serviços web e mensageiros 
 
 * **Host Runtime**: .NET 10 (C# 14 / Windows Forms com suporte a DPI avançado).
 * **Browser Engine**: Microsoft Edge WebView2 Runtime (Evergreen).
-* **Subsistema de Notificações**: `Microsoft.Toolkit.Uwp.Notifications` com registro formal de AUMID no Windows Shell (`IPropertyStore` / `IShellLinkW`) e invalidação atômica de cache via Win32 Shell API (`SHChangeNotify` / `SHCNE_ASSOCCHANGED`).
+* **Subsistema de Notificações**: `Microsoft.Toolkit.Uwp.Notifications` com registro formal de AUMID no Windows Shell (`IPropertyStore` / `IShellLinkW`), invalidação atômica de cache via Win32 Shell API (`SHChangeNotify` / `SHCNE_ASSOCCHANGED`), badge vermelho no `NotifyIcon` (System Tray) e badge numérico nativo na **Barra de Tarefas** via COM `ITaskbarList3.SetOverlayIcon` adaptado à cor de destaque do Windows (`UISettings`).
 * **Configuração em Camadas**: Carregamento hierárquico via `Microsoft.Extensions.Configuration` (Linha de Comando > Variáveis de Ambiente `WEBTRAY_` > `appsettings.json` > `appsettings.sample.json`).
 
 ---
@@ -43,7 +43,8 @@ Copie o arquivo `appsettings.sample.json` para `appsettings.json` e ajuste os pa
     "StartMinimized": false,
     "StartHiddenInTray": false,
     "CloseToTray": true,
-    "MinimizeToTray": true
+    "MinimizeToTray": false,
+    "KeepInTaskbarOnClose": true
   },
   "Web": {
     "Url": "https://messaging.example.com",
@@ -52,6 +53,7 @@ Copie o arquivo `appsettings.sample.json` para `appsettings.json` e ajuste os pa
   },
   "Notifications": {
     "EnableCustomToastNotifications": true,
+    "ShowTrayUnreadBadge": true,
     "MonitorDocumentTitle": true,
     "TitleNotificationRegex": "^\\((\\d+)\\)",
     "PlaySound": true
@@ -68,12 +70,14 @@ Copie o arquivo `appsettings.sample.json` para `appsettings.json` e ajuste os pa
 | **Window** | `Width` / `Height` | `int` | Dimensões iniciais da janela em pixels. |
 | **Window** | `StartMinimized` | `bool` | Inicia a aplicação com a janela minimizada na barra de tarefas. |
 | **Window** | `StartHiddenInTray` | `bool` | Inicia o aplicativo diretamente oculto na bandeja do sistema. |
-| **Window** | `CloseToTray` | `bool` | Se `true`, clicar no botão `X` oculta a janela em vez de encerrar. |
-| **Window** | `MinimizeToTray` | `bool` | Se `true`, minimizar a janela a remove da barra de tarefas e envia para o tray. |
+| **Window** | `CloseToTray` | `bool` | Se `true`, clicar no botão `X` impede o encerramento do processo e envia o aplicativo para segundo plano/tray. |
+| **Window** | `MinimizeToTray` | `bool` | Se `true`, minimizar (`_`) remove a janela da barra de tarefas mantendo-a apenas no tray. Se `false`, mantém em ambos. |
+| **Window** | `KeepInTaskbarOnClose` | `bool` | Se `true` (padrão) e `CloseToTray` ativo, clicar em `X` minimiza para a **Barra de Tarefas** mantendo o ícone no **System Tray** simultaneamente. Se `false`, oculta totalmente da barra de tarefas. |
 | **Web** | `Url` | `string` | URL do serviço web ou mensageiro a ser hospedado. |
 | **Web** | `UserDataFolder` | `string` | Caminho do perfil de cookies/cache. Suporta variáveis do Windows como `%LOCALAPPDATA%`. |
 | **Web** | `UserAgent` | `string` | Substitui o cabeçalho User-Agent (opcional). |
 | **Notifications** | `EnableCustomToastNotifications` | `bool` | Ativa o disparo de banners nativos do Windows pelo aplicativo C#. |
+| **Notifications** | `ShowTrayUnreadBadge` | `bool` | Exibe bolinha vermelha de alerta sobre o ícone do **System Tray** e da **Barra de Tarefas** quando há notificações ou mensagens não lidas. |
 | **Notifications** | `MonitorDocumentTitle` | `bool` | Monitora contadores de mensagens não lidas no título da página. |
 | **Notifications** | `TitleNotificationRegex` | `string` | Expressão regular para extrair contadores numéricos de mensagens (padrão: `^\\((\\d+)\\)`). |
 | **Notifications** | `PlaySound` | `bool` | Emite o alerta sonoro padrão do sistema ao exibir o Toast. |
@@ -113,7 +117,8 @@ Crie ou ajuste o seu arquivo `appsettings.json` na raiz da aplicação (ou junto
     "StartMinimized": false,
     "StartHiddenInTray": false,
     "CloseToTray": true,
-    "MinimizeToTray": true
+    "MinimizeToTray": false,
+    "KeepInTaskbarOnClose": true
   },
   "Web": {
     "Url": "https://teams.live.com/v2/",
@@ -122,6 +127,7 @@ Crie ou ajuste o seu arquivo `appsettings.json` na raiz da aplicação (ou junto
   },
   "Notifications": {
     "EnableCustomToastNotifications": true,
+    "ShowTrayUnreadBadge": true,
     "MonitorDocumentTitle": true,
     "TitleNotificationRegex": "^\\((\\d+)\\)",
     "PlaySound": true

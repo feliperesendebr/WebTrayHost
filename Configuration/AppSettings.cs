@@ -15,7 +15,13 @@ public class WindowSettings
     public bool StartMinimized { get; set; } = false;
     public bool StartHiddenInTray { get; set; } = false;
     public bool CloseToTray { get; set; } = true;
-    public bool MinimizeToTray { get; set; } = true;
+    public bool MinimizeToTray { get; set; } = false;
+
+    /// <summary>
+    /// Quando CloseToTray está ativo, mantém a janela visível na Barra de Tarefas (minimizada)
+    /// além do ícone na bandeja do sistema (System Tray), em vez de ocultá-la totalmente.
+    /// </summary>
+    public bool KeepInTaskbarOnClose { get; set; } = true;
 
     /// <summary>
     /// Caminho opcional para arquivo de ícone (.ico ou .png).
@@ -38,6 +44,12 @@ public class NotificationSettings
     /// Ativa ou desativa as notificações nativas disparadas pelo executável (Windows Action Center).
     /// </summary>
     public bool EnableCustomToastNotifications { get; set; } = true;
+
+    /// <summary>
+    /// Exibe uma bolinha vermelha de notificação sobre o ícone na bandeja (System Tray) e na Barra de Tarefas
+    /// quando houver mensagens não lidas ou notificações pendentes.
+    /// </summary>
+    public bool ShowTrayUnreadBadge { get; set; } = true;
 
     /// <summary>
     /// Monitora contadores de mensagens não lidas no título da página (ex: "(1) Conversas").
